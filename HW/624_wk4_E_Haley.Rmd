@@ -1,0 +1,312 @@
+---
+title: "624_wk4_E_Haley"
+author: "Ethan Haley"
+date: "2/15/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(fpp3)
+```
+
+**1) Produce forecasts for the following series using whichever of NAIVE(y), SNAIVE(y) or RW(y ~ drift()) is more appropriate in each case:**
+
+**Australian Population (global_economy)**  
+
+
+The population has increased at a steady rate, so the drift method is the best choice of the 3.  
+
+```{r}
+ausPop = global_economy %>%
+  filter(Country=="Australia") %>%
+  select(Population) 
+ausPop %>%
+  model(RW(Population ~ drift())) %>% 
+  forecast(h = 10) %>%
+  autoplot(ausPop, level=NULL) +
+  labs(title = "Australian population, with 10-year forecast in blue")
+```
+
+
+**Bricks (aus_production)**  
+
+The seasonal pattern seems to be part of a 5-year cycle, so I'll use SNAIVE with 5-year lag.
+
+```{r}
+bricks = aus_production %>%
+  select(Bricks) %>%
+  filter(!is.na(Bricks))
+bricks_fc = bricks %>%
+  model(SNAIVE(Bricks ~ lag("5 years"))) %>%
+  forecast(h=20)
+bricks_fc %>%
+  autoplot(bricks, level=NULL) +
+  labs(title = "Australian Bricks Production, with 5-year Forecast in Blue")
+```
+
+
+**NSW Lambs (aus_livestock)**  
+
+```{r}
+nswLambs = aus_livestock %>%
+  filter(State=="New South Wales") %>%
+  filter(Animal=="Lambs")
+nswLambs %>% 
+  model(NAIVE(Count)) %>%
+  forecast(h=20) %>%
+  autoplot(nswLambs) +
+  labs(title = "Naive Forecasting (in Blue) the Number of Lambs Slaughtered in NSW") +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+
+I chose the Naïve forecast because the seasonality was so unpredictable.
+The size of the prediction intervals shows how uncertain the forecast is.  
+
+**Household wealth (hh_budget).**  
+
+```{r}
+hh_budget %>%
+  model(RW(Wealth ~ drift())) %>%
+  forecast(h=5) %>%
+  autoplot(hh_budget, level=NULL) +
+  labs(title = "Household Wealth, with 5-yr drift forecasts in blue")
+```
+
+
+**Australian takeaway food turnover (aus_retail).**  
+
+```{r}
+takeout = aus_retail %>%
+  filter(Industry=="Takeaway food services")
+
+takeout = aggregate(Turnover ~ Month, takeout, sum) %>%
+  as_tsibble(index = Month)
+
+takeout %>%
+  model(SNAIVE(Turnover ~ drift(drift=T))) %>%
+  forecast(h=36) %>%
+  autoplot(takeout, level=NULL) +
+  labs(title = "Australian takeaway food turnover, with 3 year SNAIVE+drift forecast in blue")
+```
+
+
+**2)  Use the Facebook stock price (data set gafa_stock) to do the following:**  
+
+**Produce a time plot of the series.**  
+
+```{r}
+fb = gafa_stock %>%
+  filter(Symbol=="FB") %>%
+  select(Adj_Close)
+fb %>%
+  autoplot(Adj_Close) +
+  labs(title = "Adjusted Closing Price of Facebook")
+```
+
+
+**Produce forecasts using the drift method and plot them.**  
+
+```{r}
+fb = fb %>%
+  mutate(day = row_number()) %>%
+  update_tsibble(index = day, regular = TRUE)
+fb %>%
+  model(RW(Adj_Close ~ drift())) %>%
+  forecast(h=250) %>%
+  autoplot(fb, level=NULL) +
+  labs(title = "Adj Close for Facebook stock, 2014-2018, with drift forecast in blue")
+```
+
+
+**Show that the forecasts are identical to extending the line drawn between the first and last observations.**  
+
+```{r}
+first = fb$Adj_Close[1]
+last = fb$Adj_Close[length((fb$Adj_Close))]
+fb %>%
+  model(RW(Adj_Close ~ drift())) %>%
+  forecast(h=250) %>%
+  autoplot(fb, level=NULL, colour='orange', size=3) +
+  geom_abline(slope = (last - first) / dim(fb)[1], 
+              intercept = first) +
+  labs(title = "Drift forecast for FB in orange")
+```
+
+
+**Try using some of the other benchmark functions to forecast the same data set. Which do you think is best? Why?** 
+
+There's no seasonality, so SNAIVE wouldn't make sense, but you could argue that the Naive model would be a good model for a stock like this.  The average price might also be a viable consideration for long-term predictions, but not for short-term prices which are heavily dependent upon the most recently observed price.  The drift model is probably best, since there is indeed a historical trend in stock prices, and it's upward, not flat (as NAIVE is).
+
+
+**3)  Apply a seasonal naïve method to the quarterly Australian beer production data from 1992.** 
+**Check if the residuals look like white noise, and plot the forecasts. The following code will help.**
+
+```{r}
+# Extract data of interest
+recent_production <- aus_production %>%
+  filter(year(Quarter) >= 1992)
+# Define and estimate a model
+fit <- recent_production %>% model(SNAIVE(Beer))
+# Look at the residuals
+fit %>% gg_tsresiduals()
+# Look a some forecasts
+fit %>% 
+  forecast() %>% 
+  autoplot(recent_production) + 
+  labs(title = "SNAIVE Forecast for Australian Beer Production")
+```
+
+The residuals do look like white noise to me, and they are somewhat normally distributed.  But the ACF plot shows there is some sort of yearly (4Q lag) pattern yet to be fitted by this model. 
+
+```{r}
+aug = fit %>%
+  augment()
+aug %>% features(.innov, box_pierce, lag = 10, dof = 0)
+```
+
+**What do you conclude?**  
+
+The low p-value of the Box-Pierce test confirms that the significant 4Q-lag AC is not just by chance, and the residuals are not just white noise.  It appears that down years follow up years and vice versa, but in a cyclical, rather than seasonal, manner.  
+
+
+**4) Repeat the previous exercise using the Australian Exports series from global_economy** 
+**and the Bricks series from aus_production.**
+**Use whichever of NAIVE() or SNAIVE() is more appropriate in each case.**  
+
+```{r}
+ausexp = global_economy %>%
+  filter(Country=="Australia") %>%
+  select(Exports)
+mod = ausexp %>% 
+  model(NAIVE(Exports)) 
+mod %>%
+  forecast(h=5) %>%
+  autoplot(ausexp, level=NULL) +
+  labs(title = 'Australian Exports')
+```
+```{r}
+mod %>%
+  gg_tsresiduals()
+```
+
+This Naive forecast works fine for the most part, but the only issue is that it hasn't taken advantage of the fact that most up years are followed by down years (increases/decreases to be more accurate) and vice versa. This is exactly like the beer production data in the previous question.  So the 1-Y lag AC is negative here, to a somewhat significant extent. 
+
+
+As far as the `bricks` data go, since I tried earlier to model them with a 5 year "season" I'll probably find out now that wasn't a valid approach, based on residuals.  Let's see:
+
+```{r}
+bricks %>%
+  model(SNAIVE(Bricks ~ lag("5 years"))) %>%
+  gg_tsresiduals()
+```
+
+Well, that shows the problem with my 5-year season approach.  Not only are the residuals all auto-correlated and bunched, they aren't normally distributed.  Maybe just a standard 1-year seasonal plus drift:  
+
+```{r}
+bricks %>%
+  model(SNAIVE(Bricks ~ drift(drift=T))) %>%
+  gg_tsresiduals()
+```
+
+That is almost as bad, with all the patterns in the residuals, but at least a lot more of the residuals
+are bunched near zero, probably from adding the drift.  In the end, there is simply no way to account for
+this kind of cyclicity and these huge drops in an upward trend, at least not with the tools we have so far.  
+
+
+**7)  For your retail time series (from Exercise 8 in Section 2.10):**
+
+**Create a training dataset consisting of observations before 2011 using**
+```{r}
+set.seed(624)
+myseries <- aus_retail %>%
+  filter(`Series ID` == sample(aus_retail$`Series ID`,1))
+myseries_train <- myseries %>%
+  filter(year(Month) < 2011)
+```
+
+**Check that your data have been split appropriately by producing the following plot.**
+
+```{r}
+autoplot(myseries, Turnover) +
+  autolayer(myseries_train, Turnover, colour = "red") + 
+  labs(title = "Turnover for one Australian Takeout company, with training data in red")
+```
+
+**Fit a seasonal naïve model using SNAIVE() applied to your training data (myseries_train).**
+
+```{r}
+fit <- myseries_train %>%
+  model(SNAIVE(Turnover))
+```
+
+**Check the residuals.**
+
+```{r}
+fit %>% gg_tsresiduals()
+```
+
+**Do the residuals appear to be uncorrelated and normally distributed?**  
+
+Normally distributed, sort of, but skewed.  Uncorrelated, no. 
+
+**Produce forecasts for the test data**  
+
+```{r, warning=F}
+fc <- fit %>%
+  forecast(new_data = anti_join(myseries, myseries_train,
+                                by = c("State", "Industry", "Series ID",
+                                       "Month", "Turnover")))
+fc %>%
+  autoplot(myseries, level=NULL) +
+  labs(title = "SNAIVE forecast for Takeout Company")
+```
+
+**Compare the accuracy of your forecasts against the actual values.**
+
+```{r}
+paste('Training RMSE: ', fit %>% accuracy() %>% select(RMSE) %>% round)
+paste('Forecast RMSE: ', fc %>% accuracy(myseries) %>% select(RMSE) %>% round)
+```
+
+How about the SNAIVE model with drift?  
+```{r}
+driftfit <- myseries_train %>%
+  model(SNAIVE(Turnover ~ drift(drift=T)))
+driftfc <- driftfit %>%
+  forecast(new_data = anti_join(myseries, myseries_train,
+                                by = c("State", "Industry", "Series ID",
+                                       "Month", "Turnover")))
+driftfc %>%
+  autoplot(myseries, level=NULL) +
+  labs(title = "SNAIVE+drift forecast (in blue) for Takeout Company")
+```
+
+```{r}
+paste('No Drift Training RMSE: ', fit %>% accuracy() %>% select(RMSE) %>% round)
+paste('No Drift Forecast RMSE: ', fc %>% accuracy(myseries) %>% select(RMSE) %>% round)
+paste('Drift Training RMSE: ', driftfit %>% accuracy() %>% select(RMSE) %>% round)
+paste('Drift Forecast RMSE: ', driftfc %>% accuracy(myseries) %>% select(RMSE) %>% round)
+```
+
+
+**How sensitive are the accuracy measures to the amount of training data used?**  
+
+The most recent data are the most important ones to have for **forecast accuracy**, for the models we've looked at.  
+Adding more training data means going further back in time, which won't affect forecast accuracy for the NAIVE model, has no reason to positively affect the SNAIVE forecast accuracy, will make the forecast accuracy worse for an average-value method with a trending series, and could affect the forecast accuracy positively or negatively, but eventually reverting to a mean, for a non-trending series or for a `drift` method.  So in general I would say the **forecast** accuracy measures are negatively affected by adding more data, with the level of sensitivity being proportional to the steepness of trend and the historical rate of change of seasonality and cyclicity.  
+
+For the **training** accuracy itself, the question is even harder to answer, since it will of course depend on what the historical data being added looks like.  If adding older data completes some otherwise unseeable long-term cycle or trend, then it may improve the training accuracy **and** forecast accuracy.  But in most cases I don't see why adding older data would improve training accuracy in general.  The one big exception that comes to mind is that the data we've been looking at usually become more stable and have smaller values (especially economic data) as you go further back in time, and therefore their RMSE becomes smaller even if the patterns that make more recent forecasts better make them worse.  Disregarding that phenomenon, the question boils down to "Was it easier or harder to make accurate forecasts in the past, in terms of RMSE?", and I think it would take a lot of research to make a general argument one way or the other, for all time series.  So my general answer is "Not sensitive, except that time series often vary less and have smaller values as you go further back in time, and thus the more data you add, the smaller the RMSE".    
+
+
+
+
+
+
+
+
+
+
+
+
+
+

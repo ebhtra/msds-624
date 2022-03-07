@@ -1,0 +1,259 @@
+---
+title: "624_wk5_E_Haley"
+author: "Ethan Haley"
+date: "3/2/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+#install.packages("mlbench")
+library(mlbench)
+```
+
+```{r}
+data(Glass)
+#str(Glass)
+```
+## UC Irvine ML Repo Glass ID Data  
+
+**R docs: *****"The study of classification of types of glass was motivated by criminological investigation. At the scene of the crime, the glass left can be used as evidence (if it is correctly identified!)."***
+
+### 214 samples of glass, belonging to 6 types.  Predictors include Refractive Index (RI) plus 8 elements' percentage in each sample. 
+**Na** Sodium |
+**Mg**	Magnesium |
+**Al**	Aluminum |
+**Si**	Silicon |
+**K**	  Potassium |
+**Ca**	Calcium |
+**Ba**	Barium |
+**Fe**	Iron
+
+**First use visualizations to explore the distribution of each predictor, as well as the relations between predictors.**  
+
+To begin with, a look at how each predictor is distributed **by glass type**, which might reveal interesting distributional patterns within single predictors, and possibly relationships which wouldn't otherwise be evident, between the response variable and the predictors:
+
+```{r, fig.height=12, fig.width=9}
+par(mfrow = c(3,3))
+for (n in names(Glass)[1:9]) {
+  boxplot(Glass[[n]] ~ Glass$Type, ylab = paste(if (n=="RI") '' else "percentage", n), main = n)
+}
+```
+
+Those of us who aren't scientists may be interested to see that all the glass types are mostly composed of silicon (72-74%), sodium (13-15%), and calcium (8-12%), looking at the y-axes for each element.  You can see that glass Types 1, 2, and 3 may be hard to distinguish, since they have similar distributions within each predictor.  Type 2 tends to have outlier values both to the upside and downside, compared to types 1 and 3.  Type 7 looks the easiest to predict, with high Barium levels.  Types 5 and 6 have high Calcium and low Magnesium and Iron (Fe), and may be hard to differentiate, but they only represent about 10% of the samples anyhow.  
+
+##### Glass Types by Sample Count:
+
+```{r}
+table(Glass$Type)
+```
+
+Here's how each predictor looks without regard to the response:  
+
+```{r, fig.height=6, fig.width=9}
+par(mfrow = c(3,3))
+for (n in names(Glass)[1:9]) {
+  hist(Glass[[n]], main = paste("Distribution of", n), xlab = '')
+}
+```
+
+**Ba:**  Almost all of the non-zero Barium values belong to Type 7 glass, so the only reason to transform the Ba predictor would be to shrink it if you were doing PCA or something else that depended on the spread of the variables. 
+
+**Fe:**  Similarly, 2/3 of the Iron levels are 0.  If we want a transformed normal distribution, we need to filter out the zeroes.   
+
+```{r}
+hist(Glass$Fe[Glass$Fe>0], main = "Only one-third of the 214 Samples Contain Iron", ylab = "Samples",
+     xlab = "Percentage of Fe in the Sample")
+```
+
+**K:**  Even if we remove the most outlying Potassium samples, we won't be able to transform K into normalcy:  
+
+```{r}
+hist(Glass$K[(Glass$K <= 1) ], main = "The most Normal Range for Potassium Samples", 
+     ylab = "Samples", xlab = "Percentage of K in the Sample")
+```
+
+
+**Ca:** Somewhat normal
+
+**Si:** Somewhat normal
+
+**Al:** Somewhat normal
+
+**RI:** Somewhat normal
+
+**Na:** Somewhat normal
+
+**Mg:** About 20% of the samples have zeroes here, but the rest of them have a very left-skewed distribution, so could potentially be transformed logarithmically or with a Box-Cox tranformation into something a linear model deals with well.  
+
+```{r}
+hist(Glass$Mg[Glass$Mg>0], breaks=16,
+     main = "Left-skewed distribution of samples with positive Mg")
+```
+
+
+Because a few of the variables have essentially two sub-distributions---one somewhat normal and one clustered at zero---it might be effective to use a zero-inflated or hurdle method to classify the samples.  Or maybe just create zero/nonzero dummy variables for those features and let that dummy interact multiplicatively with the original feature, so that a linear model can assign different weights to variables with zero values.  
+
+I might also remove the one extremely high Potassium (K) sample from the training batch.  It comes from a Type 5 sample anyhow, the Type that has the highest levels of K, so its absence couldn't misdirect a classifier during training.  
+
+Beyond these two changes, I expect that it would help a linear classifier if the values were all standard normalized, especially since some of the percentages are much higher (Silicon) than the rest.  Although the model that probably would work best here, a decision tree/forest of some sort, wouldn't care about such normalization, and wouldn't need a dummy variable for the zero-inflated variables either.
+
+The other part of this question was about how the predictors interact.  A correlation matrix is one way to inspect this in a chart.  
+
+```{r}
+library(corrplot)
+library(fpp3)
+corrplot(cor(Glass %>% select(-Type)), type = "upper", diag = F)
+```
+
+This correlation plot shows how redundant Calcium is with the Refractive Index.  If you go back up to the boxplots above, you can see how each Type of glass has a similar distribution of the two features.  Probably you would just eliminate one of these two features for a linear classifier.  On the other hand, they don't necessarily interact with the other features in an identical manner.  For example, the RI has a much stronger negative correlation with Si and Al than does Ca, whereas Ca correlates more negatively with Mg than the RI does.  So it might be wise to try models with and without removal of one feature.  Though this comes at the risk of overfitting, with this smallish dataset. 
+
+The book suggests an algorithm that removes one of the two most (positively or negatively) correlated predictors, RI or Ca here, based on whichever is highest correlated with the other features, and then reassessing to see if more features might warrant removal.  Here it looks close, but Ca turns out to have slightly higher correlation with other features, so we could see how correlations look after removing it.  
+
+```{r}
+rowSums(abs(cor(Glass %>% select(-Type)))) - 1  # remove self-correlation
+```
+
+After removing Ca:
+
+```{r}
+corrplot(cor(Glass %>% select(-c(Type, Ca))), type = "upper", diag = F)
+```
+```{r}
+rowSums(abs(cor(Glass %>% select(-c(Type, Ca))))) - 1  # remove self-correlation
+```
+
+This is interesting, because Aluminum has the highest average correlation with the other predictors now, but the book's algorithm calls for eliminating one of the two most highly correlated predictors, which are RI and Si, such that RI would be removed next:  
+
+```{r}
+corrplot(cor(Glass %>% select(-c(Type, Ca, RI))), type = "upper", diag = F)
+```
+
+Mg, Ba, and Al all have similar 2-way correlations with each other now (around .48 or .49, pos. or neg.), and it's actually Mg-Ba with the highest value (-.4923), yet we can see that Aluminum has a higher overall correlation with the other features:
+
+```{r}
+rowSums(abs(cor(Glass %>% select(-c(Type, Ca, RI))))) - 1  # remove self-correlation
+```
+
+The book mentions a correlation threshold at which the algorithm terminates, so maybe if we had set that threshold to be .5, we would be able to stop without having to make the decision as to which of these three elements to remove at this point.  It's evident that the algorithm leaves room for small fluctuations to make big differences, as all greedy algorithms do. 
+
+## UC Irvine ML Repo Soybean Disease Data  
+
+683 observations of 19 classes of disease and 35 categorical features
+
+```{r}
+data(Soybean)
+```
+
+**Investigate the frequency distributions of the categorical predictors.  Are any degenerate as discussed in chapter 3?**
+
+The first criterion mentioned in section 3.5 as a determinant of degeneracy was if the ratio of unique values to sample size was very low (< 10% was given as an example).  This criterion can't apply here unfortunately, because the predictors are categorical, so that there are few possible values per predictor, sort of by definition.  The second criterion, on the other hand, could still apply, where the most frequent category for a predictor was hugely more present than the other categories for that variable (> 20 times more frequent was given as a rule of thumb example).  Let's see which predictors suffer from that imbalance:  
+
+```{r}
+# collect imbalance factors here
+uneven = c()
+for (n in names(Soybean)[2:36]){
+  t = sort(table(Soybean[n]), decreasing=T)
+  if (length(t) < 2) {
+    barplot(t, main = n)
+    uneven = c(uneven, n)
+    }
+  else {  # using the 20x criterion
+    if (t[1] / 20 > t[2]) {
+      barplot(t, main = n)
+      uneven = c(uneven, n)
+      }
+  }
+}
+```
+
+This method turns up 3 problematic variables, one of which, `leaf.mild`, also has over 100 missing values, so might be the first candidate to remove.
+
+
+**~18% of the rows have missing values. Are certain predictors more likely to be missing?**
+
+```{r}
+#install.packages('finalfit')
+library(finalfit)
+```
+
+```{r}
+Soybean %>%
+  missing_plot()
+```
+
+This shows that 19 of the 35 predictors are usually missing together in a sample, and they mostly have to do with 3 specific plant parts--Fruit, Seed, and Leaf--as well as Hail, Sever(ity), Shriveling, Mold, Germ, and Lodging.  
+
+In addition, the last 30 or so samples in the data have even more data missing, as do about 10 samples in the middle of the data.  
+
+### Missingness Grid
+
+```{r, fig.width=8}
+Soybean %>%
+  missing_pattern(dependent = 'Class', explanatory = names(Soybean)) -> plot2 # to suppress matrix output
+```
+
+
+- 55 of the 121 samples with at least one NA have that group of 19 NA's (3rd row in the grid above).
+- The grid is arranged such that the predictors with the most missing values (magenta squares) are on the right.
+- If a sample is missing any values, it is missing `hail`, `sever`, `seed.tmt`, and `lodging`, at a minimum.
+
+
+**Does the missingness relate to the class outcome?**  
+
+Let's see if these two clusters---the one with 19 missing values and the ones with almost all missing---correlate with the disease Class. 
+
+First how are the Classes distributed? 
+
+```{r}
+par(mar=c(2,12,2,2))
+barplot(sort(table(Soybean$Class), descending=T), horiz = T, las = 2,
+        main = "Number of Soybean Samples with each Disease Class     ")
+```
+
+And the same chart but for **only the samples with missing data:**
+
+```{r}
+par(mar=c(2,12,2,2))
+missing = Soybean[rowSums(is.na(Soybean)) > 0, ]
+barplot(sort(table(missing$Class), descending=T), horiz = T, las = 2,
+        main = "Number of NA Soybean Samples with each Disease Class             ")
+```
+
+When we look at the 121 samples with any NA's, we see that most of those (~68) had `phytophthora-rot` as their Class.  
+The other ~53 samples comprise **all** of the 4 least-common disease Class samples.  
+So there is very high correlation between the dependent variable and missingness.  
+
+**Make a strategy for dealing with the missing values, either through removal of the predictor or imputation.**
+
+I would definitely not impute any values here, as nothing is missing randomly, and so the effect would be to ignore the informative missingness, or even worse, to falsely make one Class of Soybean look like another, intentionally.  As just mentioned, the four least prevalent disease Classes always have missing values, and all the rest of the samples with missing values belong to one single Class.  Let's see what the missing values are for `phytophthora-rot` and then for the smaller group.  
+
+### Missingness for `phytophthora-rot` Soybeans
+
+```{r, fig.width=8}
+phyto = Soybean[Soybean$Class =="phytophthora-rot", ]
+phyto %>%
+  missing_pattern(dependent = 'Class', explanatory = names(Soybean)) -> plot2 # to suppress matrix output
+```
+
+
+Rows 2 and 3 of this `phytophthora-rot` data subset are the same (with some columns re-arranged) as rows 2 and 3 of the entire dataset plot earlier. So we don't even need to make this plot for the smaller group of 4 diseases with missing values, 
+since it will be identical to the bottom of that earlier plot, at least in terms of the information it conveys.
+
+Since the missing values are confined to 5 of the 19 classes, and the proportion of samples with NA's within each of those 5 Classes is either most or all of the Class's samples, imputation of the missing values would transform the samples into something completely different from what they actually are.  If you wanted to fool the model, imputation would be a viable choice.
+
+At the same time, it doesn't make sense to remove variables with missing values either, since that would eliminate most of the available information in the dataset.  The obvious alternative to imputation and removal is to use a Random Forest Classifier, or at least some other tree-based model, which would take advantage of the information provided by the missingness.  If for some reason you were forced to use a linear model, and thus had to impute missing values, you could at least create a dummy flag for each imputed variable, 0 for imputed values and 1 for not imputed, and then the model could fit different weights to interaction terms `flag:var` for imputed vs. actual variable values.  
+
+**Two more points guiding treatment of missingness:**
+
+- Someone with knowledge of `phytophthora-rot`, for example, might immediately realize how to deal with the missingness patterns in its samples, based on the presence of values for other variables maybe.  
+- Perhaps most importantly, we never specified what our goals for this data were.  It seems like we're looking to build a model with predictive power, but separating 683 samples into training and testing subsets accomplishes a very narrow goal, at best.  It seems improbable that whatever unseen data our model would be used on would actually exhibit the same patterns of missingness.  Outside of some sort of controlled experiment or contest, we presumably would be hoping for predictive powers that applied to all sorts of new measurements and samples.  
+
+
+
+
+
+
