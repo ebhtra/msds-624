@@ -1,0 +1,637 @@
+---
+title: "624_wk6_E_Haley"
+author: "Ethan Haley"
+date: "2/17/2022"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(glue)
+library(fpp3)
+```
+
+
+**1)  Consider the the number of pigs slaughtered in Victoria, available in the `aus_livestock` dataset.** 
+
+```{r}
+pigs = aus_livestock %>%
+  filter(Animal == 'Pigs') %>%
+  filter(State == 'Victoria')
+autoplot(pigs, Count) +
+  labs(title = "Pigs Slaughtered in Victoria, Australia")
+```
+
+
+**Use the `ETS()` function to estimate the equivalent model for simple exponential smoothing.**  
+
+```{r}
+# additive error, no trend or seasonality
+ses = pigs %>%
+  model(ETS(Count ~ error('A') + trend('N') + season('N')))
+```
+
+
+**Find the optimal values of $\alpha$ and $l_0$, and generate forecasts for the next four months.**  
+
+```{r}
+# dig into the ETS layers to finds params
+params = ses$`ETS(Count ~ error("A") + trend("N") + season("N"))`[[1]][[1]][[1]]
+l_0 = params[2,2]
+alph = params[1,2]
+```
+
+**$\alpha$**
+```{r, echo=F}
+cat(round(alph$estimate, 3))
+```
+**$l_0$**
+```{r, echo=F}
+cat(round(l_0$estimate))
+```
+
+Or to avoid digging through all the layers:  
+
+```{r}
+ses %>% 
+  tidy %>% 
+  select(term, estimate)
+```
+First 4 forecasts:  
+
+```{r}
+ses %>%
+  forecast(h = 4) -> fcast
+fcast[c("Month", ".mean")] %>% 
+  transmute(forecast=.mean)
+```
+
+
+**Compute a 95% prediction interval for the first forecast using $\hat{y}\pm 1.96s$,**  
+**where $s$ is the standard deviation of the residuals. Compare your interval with the interval produced by R.**  
+
+```{r}
+s = sd(augment(ses)['.resid'][[1]])
+glue("The 95% prediction interval is {round(fcast$.mean[1] - s*1.96)} to {round(fcast$.mean[1] + s*1.96)}")
+```
+
+```{r}
+fcast %>%
+  autoplot() +
+  labs(title = "Prediction Interval for First 4 SES Forecasts")
+```
+
+The first 95% interval looks to be the same as the s-calculated 95% interval.   
+
+**5) Data set `global_economy` contains the annual Exports from many countries. Select one country to analyse.**
+
+```{r}
+spain = global_economy %>%
+  filter(Country=='Spain') %>%
+  select(Exports)
+```
+
+
+**a) Plot the `Exports` series and discuss the main features of the data.**
+
+```{r}
+spain %>%
+  autoplot(Exports) +
+  labs(title = "Spain Exports as a Percent of GDP")
+```
+
+The trend is upwards, and somewhat cyclical.  1979-92 looks a lot like 1995-2007, for example.  
+
+**b)  Use an `ETS(A,N,N)` model to forecast the series, and plot the forecasts.**
+
+```{r}
+# additive error, no trend or seasonality
+spainSES = spain %>%
+  model(ETS(Exports ~ error('A') + trend('N') + season('N')))
+
+spainSES %>%
+  forecast(h=4) %>%
+  autoplot() +
+  labs(title = "Forecast for Spanish Exports using Simple Exponential Smoothing",
+       y = "Exports as % of GDP")
+```
+
+
+**c)  Compute the RMSE values for the training data.**
+
+```{r}
+resids = spainSES %>%
+  resid() 
+glue("Training RMSE is {round(sqrt(mean(resids$.resid * resids$.resid)), 3)}")
+```
+
+
+**d)  Compare the results to those from an `ETS(A,A,N)` model.**
+**(Remember that the trended model is using one more parameter than the simpler model.)**
+
+```{r}
+# additive error, additive trend, no seasonality
+spainAAN = spain %>%
+  model(ETS(Exports ~ error('A') + trend('A') + season('N')))
+
+spainAAN %>%
+  forecast(h=4) %>%
+  autoplot() +
+  labs(title = "Forecast for Spanish Exports using ETS without Season",
+       y = "Exports as % of GDP")
+```
+
+```{r}
+resids = spainAAN %>%
+  resid() 
+glue("Training RMSE is {round(sqrt(mean(resids$.resid * resids$.resid)), 3)}")
+```
+
+**Discuss the merits of the two forecasting methods for this data set.**
+
+The model with trend should be more accurate in general, since there is a clear trend.  
+And in fact, the training RMSE is lower with the trend accounted for.
+But since there is also cyclicity probably, it's possible that the short-term trend 
+may be downward at any point, and the SES forecast would be better in that case.  
+
+**e)  Compare the forecasts from both methods. Which do you think is best?**
+
+I think the trended forecast is best, since it uses more of its training information.  
+Having said that, it does appear that at the time of forecasting there may be a cyclical downturn on the horizon, 
+in which case the flat forecast would do better.  Also, the Exports are being measured in terms of percentage of GDP,
+so it will get harder for the trend to continue, the higher it gets.  
+
+
+**f)  Calculate a 95% prediction interval for the first forecast for each model,**
+**using the RMSE values and assuming normal errors. Compare your intervals with those produced using R.**
+
+```{r}
+s1 = sd(augment(spainSES)['.resid'][[1]])
+spainSES %>%
+  forecast(h = 4) -> fcast1
+glue("The 95% prediction interval is {round(fcast1$.mean[1] - s1*1.96, 2)} to {round(fcast1$.mean[1] + s1*1.96, 2)} for the first forecast of the SES model.")
+
+s2 = sd(augment(spainAAN)['.resid'][[1]])
+spainAAN %>%
+  forecast(h = 4) -> fcast2
+glue("The 95% prediction interval is {round(fcast2$.mean[1] - s2*1.96, 2)} to {round(fcast2$.mean[1] + s2*1.96, 2)} for the first forecast of the trend model.")
+
+```
+
+The intervals look very similar to the autoplot ones, although it appears the calculated one
+for the SES model, 31.68 to 36.51, is just slightly tighter than the one plotted by R.
+
+**6)  Forecast the Chinese GDP from the global_economy data set using an `ETS` model.**
+**Experiment with the various options in the `ETS()` function to see how much the forecasts change with damped trend,**
+**or with a Box-Cox transformation. Try to develop an intuition of what each is doing to the forecasts.**  
+
+```{r}
+china = global_economy %>%
+  filter(Country=="China") %>%
+  select(GDP) %>%
+  mutate(logGDP = log(GDP))
+autoplot(china, GDP) +
+  labs(title = "China GDP")
+```
+
+Make it more linear with a log transform:
+
+```{r}
+autoplot(china, logGDP) +
+  labs(title = "Logarithm of China GDP")
+```
+
+```{r}
+chinaMods = china %>%
+  model(
+    'Phi 1.0' = ETS(logGDP ~ error("A") + trend("A") + season("N")),
+    'Phi 0.95' = ETS(logGDP ~ error("A") + trend("Ad", phi = 0.95) + season("N")),
+    'Phi 0.8' = ETS(logGDP ~ error("A") + trend("Ad", phi = 0.8) + season("N")))
+```
+
+First let's see how the logarithmic forecasts look:
+
+```{r}
+chinaMods %>%
+  forecast(h=15) %>%
+  autoplot(china, level=NULL) +
+  labs(y="log(GDP)", title="Forecasts for (log of) China's GDP using 3 damping levels") +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+The damped forecasts certainly look more viable.  
+Below are the fitted parameters for the 3 models.
+
+```{r}
+chinaMods %>% 
+  tidy %>% 
+  pivot_wider(names_from = ".model", values_from = "estimate")
+```
+
+Higher $\phi$ meant lower $\beta^*$ and higher $\alpha$. 
+The "low-phi" model had the lowest cross-validation RMSE (below).
+
+ 
+```{r, warning=F}
+china %>%
+  stretch_tsibble(.init = 10) %>%
+  model( 'Phi 1.0' = ETS(logGDP ~ error("A") + trend("A") + season("N")),
+    'Phi 0.95' = ETS(logGDP ~ error("A") + trend("Ad", phi = 0.95) + season("N")),
+    'Phi 0.8' = ETS(logGDP ~ error("A") + trend("Ad", phi = 0.8) + season("N"))) %>%
+  forecast(h=1) %>%
+  accuracy(china) %>%
+  select(.model, RMSE)
+```
+
+How do the same models look when fitted to the untransformed GDP?  
+
+```{r}
+chinaMods = china %>%
+  model(
+    'Phi 1.0' = ETS(GDP ~ error("A") + trend("A") + season("N")),
+    'Phi 0.95' = ETS(GDP ~ error("A") + trend("Ad", phi = 0.95) + season("N")),
+    'Phi 0.8' = ETS(GDP ~ error("A") + trend("Ad", phi = 0.8) + season("N")))
+```
+
+```{r}
+chinaMods %>%
+  forecast(h=15) %>%
+  autoplot(china, level=NULL) +
+  labs(y="GDP", title="Forecasts for China's GDP using 3 damping levels") +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+
+The "low-phi" forecast doesn't look at all right in this case.  
+It keeps wanting to level out, when the data are exponential or linear. 
+Which of the other two models looks better is not clear, but recall that the 
+damped one (green) looked best on the log-transformed values above. 
+
+How was the training RMSE here?
+
+```{r, warning=F}
+china %>%
+  stretch_tsibble(.init = 10) %>%
+  model( 'Phi 1.0' = ETS(GDP ~ error("A") + trend("A") + season("N")),
+    'Phi 0.95' = ETS(GDP ~ error("A") + trend("Ad", phi = 0.95) + season("N")),
+    'Phi 0.8' = ETS(GDP ~ error("A") + trend("Ad", phi = 0.8) + season("N"))) %>%
+  forecast(h=1) %>%
+  accuracy(china) %>%
+  select(.model, RMSE)
+```
+
+Although it would be hard to compare these to the logarithmic model accuracies,
+within these 3 the middle level of $\phi$ was most accurately fitted.  
+
+
+
+
+**7)  Find an `ETS` model for the `Gas` data from `aus_production` and forecast the next few years.**
+
+```{r}
+gas = aus_production %>%
+  select(Gas)
+autoplot(gas, Gas) +
+  labs(title = "Quarterly Australian Gas Production")
+```
+
+```{r}
+gasMods = gas %>%
+  model(AAM = ETS(Gas ~ error("A") + trend("A") + season("M")),
+        MAM = ETS(Gas ~ error("M") + trend("A") + season("M")),
+        AMM = ETS(Gas ~ error("A") + trend("M") + season("M")),
+        AAA = ETS(Gas ~ error("A") + trend("A") + season("A")))
+fcast = gasMods %>%
+  forecast(h=20)
+fcast %>%
+  autoplot(gas, level = NULL) +
+  labs(title="Australian Gas Production and ETS Forecasts") +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+
+It's hard to tell the forecasts apart at that scale, so here they are, zoomed in, below:
+
+```{r}
+fcast %>%
+  autoplot(level=NULL) +
+  labs(title="Closeup of ETS Forecasts") +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+
+
+**Why is multiplicative seasonality necessary here? Experiment with making the trend damped. Does it improve the forecasts?**
+
+The seasonal swings in production get more extreme as the levels rise, so multiplicative works better, in theory.
+The difference between multiplicative and additive are very small here, of course, but the upward trend in the TS is slight, 
+and with more years of upwardly-trending data, the difference would be more noticeable.  
+
+Using a multiplicative trend produced the highest forecasts, while using multiplicative error produced the biggest seasonal swings.
+The all-additive model produced the tightest swings.  Now with damped trend:
+
+```{r}
+dampT = gas %>%
+  model(AAdM = ETS(Gas ~ error("A") + trend("Ad") + season("M")),
+        AAdA = ETS(Gas ~ error("A") + trend("Ad") + season("A")))
+dampcast = dampT %>%
+  forecast(h=20)
+dampcast %>%
+  autoplot(gas, level = NULL) +
+  labs(title="Damped Trend ETS Forecasts") +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+
+Up-close damped forecasts:
+
+```{r}
+dampcast %>%
+  autoplot(level=NULL) +
+  labs(title="Closeup of Damped Forecasts") +
+  guides(colour = guide_legend(title = "Forecast"))
+```
+
+It's impossible to eyeball whether these damped forecasts are better than the undamped ones.
+You have to squint very hard to even see how they differ.  Let's just compare how AAA does against AAdA:
+
+```{r, warning=F}
+bestPhi = dampT %>% tidy() %>% filter(.model == 'AAdA', term == 'phi')
+bestPhi = bestPhi$estimate
+
+gas %>%
+  stretch_tsibble(.init = 10) %>%
+  model("AAA" = ETS(Gas ~ error("A") + trend("A") + season("A")),
+        "AAdA" = ETS(Gas ~ error("A") + trend("Ad", phi = bestPhi) + season("A"))) %>%
+  forecast(h=1) %>%
+  accuracy(gas) %>%
+  select(.model, RMSE) -> compare
+compare
+```
+The non-damped model did slightly better than the damped one, according to the cross-validation RMSE.
+
+
+
+**8)  Recall your retail time series data (from Exercise 8 in Section 2.10).**
+
+```{r}
+set.seed(624)
+myseries <- aus_retail %>%
+  filter(`Series ID` == sample(aus_retail$`Series ID`,1))
+myseries %>% 
+  autoplot(Turnover) + 
+  labs(title = "Turnover of an Australian Food Takeout Company")
+```
+
+
+**a)  Why is multiplicative seasonality necessary for this series?**
+
+The magnitude of the seasonal swings is increasing as the Turnover values increase. 
+
+**b)  Apply Holt-Winters’ multiplicative method to the data. Experiment with making the trend damped.**
+
+```{r}
+HWM = myseries %>%
+  model(AAM = ETS(Turnover ~ error("A") + trend("A") + season("M")),
+        AAdM = ETS(Turnover ~ error("A") + trend("Ad") + season("M")))
+fcast = HWM %>%
+  forecast(h=20)
+fcast %>%
+  autoplot(myseries, level = NULL) +
+  labs(title="Holt-Winters Multiplicative Seasonality Forecasts for an Aussie Food Takeout") +
+  guides(colour = guide_legend(title = "ETS Forecast"))
+```
+
+Again just the zoomed in forecasts, for inspection: 
+
+```{r}
+fcast %>%
+  autoplot(level=NULL) +
+  labs(title="Closeup of H-W Multiplicative Forecasts, Damped and Undamped Trends") +
+  guides(colour = guide_legend(title = " ETS Forecast"))
+```
+
+**c)  Compare the RMSE of the one-step forecasts from the two methods. Which do you prefer?**
+
+```{r, warning=F}
+myseries %>%
+  model('AAM' = ETS(Turnover ~ error("A") + trend("A") + season("M"))) %>%
+  resid() -> AAMresid
+myseries %>%
+  model('AAdM' = ETS(Turnover ~ error("A") + trend("Ad") + season("M"))) %>%
+  resid() -> AAdMresid
+glue("Training RMSE without dampening the trend is {round(sqrt(mean(AAMresid$.resid * AAMresid$.resid)), 3)}")
+glue("Training RMSE when dampening the trend is {round(sqrt(mean(AAdMresid$.resid * AAdMresid$.resid)), 3)}")
+
+```
+
+The dampened-trend model's RMSE is lower, so it appears preferable. But the older part of the time series is where the one-step training RMSE was probably lowest, since the chart trend dampens for the first couple of decades.  Other than a couple of steep downturns in the more recent half of the time series, the trend is ever-more-steeply upward, such that dampened forecasts for the future might not be such a great idea.  
+
+```{r}
+glue("First half Training RMSE without dampening the trend is {round(sqrt(mean(AAMresid$.resid[1:220] * AAMresid$.resid[1:220])), 3)}")
+glue("First half Training RMSE when dampening the trend is {round(sqrt(mean(AAdMresid$.resid[1:220] * AAdMresid$.resid[1:220])), 3)}")
+glue("Second half Training RMSE without dampening the trend is {round(sqrt(mean(AAMresid$.resid[222:241] * AAMresid$.resid[222:241])), 3)}")
+glue("Second half Training RMSE when dampening the trend is {round(sqrt(mean(AAdMresid$.resid[222:241] * AAdMresid$.resid[222:241])), 3)}")
+
+```
+
+As expected, the damped model fit better for the first 220 months, while the undamped fit better for the more recent 220 months.  
+
+**d)  Check that the residuals from the best method look like white noise.**
+
+```{r}
+plot(AAdMresid$.resid, 
+     main = "Training residuals using damped trend and multiplicative seasonality",
+     xlab = "Quarter")
+```
+Those residuals don't look like white noise;  They vary nicely around 0, but they vary more as time goes on.  
+It seems unreasonable to expect that the seasonal variance should have remained constant over 35 years, 
+even after using multiplicative seasonality in Holt-Winters, but probably a power transformation would even things out a bit.  
+For example, a log transform:  
+
+```{r}
+myseries %>%
+  model('AAdM' = ETS(log(Turnover) ~ error("A") + trend("Ad") + season("M"))) %>%
+  resid() -> logresid
+plot(logresid$.resid,
+     main = "Training residuals after log-transforming the response",
+     xlab = "Quarter")
+```
+
+
+**e)  Now find the test set RMSE, while training the model to the end of 2010. **
+**Can you beat the seasonal naïve approach from Exercise 7 in Section 5.11?**
+
+Note that choosing end-2010 as the training cutoff would probably cause a forecaster to choose an undamped model, since the chart trend was rising almost exponentially at that point.  But in the interest of trying to put up a better number here, I'll peek ahead and see that there was a large downturn that probably will make a damped model work better.
+
+```{r}
+myseries_train = myseries %>%
+  filter(year(Month) < 2011)
+
+myseries_test = anti_join(myseries, myseries_train,
+                                by = c("State", "Industry", "Series ID",
+                                       "Month", "Turnover"))
+snaive = myseries_train %>%
+  model(SNAIVE(Turnover))
+fc1 = snaive %>%
+  forecast(new_data = myseries_test)
+paste('SNAIVE Forecast RMSE: ', fc1 %>% accuracy(myseries) %>% select(RMSE) %>% round)
+
+driftfit = myseries_train %>%
+  model(SNAIVE(Turnover ~ drift(drift=T)))
+fc2 = driftfit %>%
+  forecast(new_data = myseries_test)
+paste('SNAIVE + Drift Forecast RMSE: ', fc2 %>% accuracy(myseries) %>% select(RMSE) %>% round)
+
+dampedETS = myseries_train %>%
+  model('AAdM' = ETS(Turnover ~ error("A") + trend("Ad") + season("M")))
+fc3 = dampedETS %>%
+  forecast(new_data = myseries_test)
+paste('Damped ETS RMSE: ', fc3 %>% accuracy(myseries) %>% select(RMSE) %>% round)
+```
+
+Plotting the same 3 models:
+
+```{r}
+m3 = myseries_train %>%
+  model("SNAIVE" = SNAIVE(Turnover),
+        "SNAIVE+Drift" = SNAIVE(Turnover ~ drift(drift=T)),
+        'AAdM' = ETS(Turnover ~ error("A") + trend("Ad") + season("M")))
+fcast = m3 %>%
+  forecast(new_data = myseries_test)
+fcast %>%
+  autoplot(myseries, level = NULL) +
+  labs(title="Seasonality Forecasts for an Aussie Food Takeout") +
+  guides(colour = guide_legend(title = "Model"))
+```
+
+The SNAIVE+drift model happens to have performed much better on the test data than the ETS model did.  
+The ETS model, in turn, outperformed the SNAIVE model by a similar margin of RMSE. 
+
+Note that over just the first half of the test data, the SNAIVE model without drift actually forecasted best, since Turnovers went against the trend for a couple of years. So it's interesting that the most naive approach did in fact work best for a short time, and the next most naive approach worked best for the longer-term window.  At the end of 2010, with your numbers in hand, you could've looked at the trend over the previous 11 years (more upward than pre-2000) and predicted that a damped trend model wouldn't forecast best.
+
+
+**9)  For the same retail data, try an `STL` decomposition applied to the Box-Cox transformed series,**
+**followed by `ETS` on the seasonally adjusted data. How does that compare with your best previous forecasts on the test set?**
+
+```{r}
+lambda = myseries_train %>%
+  features(Turnover, features = guerrero) %>%
+  pull(lambda_guerrero)
+paste("The ideal lambda for a Box-Cox transformation was calculated with the Guerrero method to be", round(lambda, 3))
+```
+
+This is essentially a logarithmic transform, which makes sense, considering that the residual plot shown earlier, from the ETS model fitted to the log transformed data, exhibited a nice level of white noise. So I'll just look at the log transform here.  It will be much easier to back out an untransformed RMSE from `forecast(log(Turnover))` than from `forecast(BoxCox(Turnover,`$$\lambda=-.02$$`))`.  
+
+**First, separate the log-transformed series into training and testing chunks:**
+
+```{r}
+logged = myseries %>%
+  mutate(LogTurnover = log(Turnover))
+log_train = logged %>%
+  filter(year(Month) < 2011)
+log_test = anti_join(logged, log_train,
+                     by = c("State", "Industry", "Series ID",
+                            "Month", "Turnover", "LogTurnover"))
+```
+
+**Second, decompose the series, using multiplicative seasonal component (which may not be right for a logged series)**  
+
+```{r}
+STLog = log_train %>%
+  model(classical_decomposition(LogTurnover, type = "multiplicative"))
+adjusted = STLog %>% 
+  components() %>%
+  select(-.model) # drop this column so that the keys remain consistent
+```
+
+**Third, model the season-adjusted series with ETS (no season, since we already removed it), damped and undamped**
+
+```{r}
+adjLog = adjusted %>%  # ETS with no season, since we backed it out just now
+  model('AAdN' = ETS(season_adjust ~ error("A") + trend("Ad") + season("N")),
+        'AAN'  = ETS(season_adjust ~ error("A") + trend("A") + season("N")))
+```
+
+**Fourth, forecast the test months with the ETS models**
+
+```{r}
+logcast = adjLog %>%
+  forecast(new_data = log_test)
+```
+
+**Fifth, line up the seasonal component pattern from the decomposition with the forecasts and multiply them**
+
+```{r}
+# And now add (multiply) the seasonal component back into the season-less forecasts
+logcast$.mean = logcast$.mean * rep(adjusted$seasonal[10:21], 8) # month 10 was Jan
+```
+
+**And finally, exponentiate the forecasts to back out the log transform, so we can compare RMSE apples to RMSE oranges**
+
+```{r}
+logcast$.mean = exp(logcast$.mean) 
+```
+
+**Hand-calculate the RMSE's**
+
+```{r}
+AANfc = logcast[logcast$.model == "AAN",]
+AAdNfc = logcast[logcast$.model == "AAdN",]
+AANerrs = (AANfc$.mean - log_test$Turnover)
+AAdNerrs = (AAdNfc$.mean - log_test$Turnover)
+
+paste('Log-transformed, multiplicatively decomposed, de-seasoned, ETS=AAN, re-seasoned, exponentiated RMSE: ', 
+      round(sqrt(mean(AANerrs * AANerrs))))
+paste('RMSE of the damped-trend version of the same:', 
+      round(sqrt(mean(AAdNerrs * AAdNerrs))))
+```
+
+It's probably not surprising that the damped trend method fared worse, since we already peeked ahead and saw that the log-transformed series was fairly linear, and thus not damped:  
+
+```{r}
+autoplot(myseries, log(Turnover)) + labs(title = "Log-transformed Series")
+```
+
+The non-damped method did better than the damped version of the untransformed series, but not as well as the good old SNAIVE+Drift.  
+It's completely possible that I made some miscalculations in all my transformations, but it's also very possible that the drift method was the difference-maker in this test set, which essentially oscillated around a long-term trend line.  Also the way I interpreted the question makes its logic seem somewhat questionable:  Why would you back out a decomposed seasonal component and then proceed to run `ETS(season="None")` on the resulting series, other than the fact that it **is**, of course, a great learning process?
+
+Another possible source of error on my part was in the decision to decompose the logged series multiplicatively.  Theoretically, the log transform should convert any multiplicative pattern into an additive one.  For good measure, I'll repeat the above process with additive STL:
+
+```{r}
+addit = log_train %>% 
+  model(classical_decomposition(LogTurnover, type = "additive"))
+addcomps = addit %>%
+  components() %>%
+  select(-.model)
+addlog = addcomps %>%  # ETS with no season, since we backed it out just now
+  model('addDamp' = ETS(season_adjust ~ error("A") + trend("Ad") + season("N")),
+        'addNoDamp'  = ETS(season_adjust ~ error("A") + trend("A") + season("N")))
+addcast = addlog %>%
+  forecast(new_data = log_test)
+addcast$.mean = addcast$.mean + rep(addcomps$seasonal[10:21], 8) # adding here instead of multiplying
+addcast$.mean = exp(addcast$.mean) 
+
+addFCdamped = addcast[addcast$.model == "addDamp",]
+addFCundamped = addcast[addcast$.model == "addNoDamp",]
+dampErr = addFCdamped$.mean - log_test$Turnover
+undampErr = addFCundamped$.mean - log_test$Turnover
+paste("damped additive RMSE", round(sqrt(mean(dampErr * dampErr))))
+paste("undamped additive RMSE", round(sqrt(mean(undampErr * undampErr))))
+```
+
+Interestingly, the (undamped) multiplicative decomposition from earlier performed better in its forecasts than did its additive equivalent.  The multiplicative decomposition led to an RMSE of 73, compared to 79 for the additive. Recall also that 79 was the RMSE when simply running a damped, multiplicative ETS model's forecasts on un-log-transformed data much earlier.  
+
+In summary, the SNAIVE+Drift model, without transforming the series, easily outperformed all other models, with a 60 RMSE on its forecasts.  
+The next best, at 73, was the log-transformed, multiplicatively decomposed, de-seasoned ETS(AAN) model.
+Third best, at RMSE=76, was the logged, additively decomposed, de-seasoned ETS(AAdN) model.
+
+My conclusions are that a simple benchmark can be a clear winner, and that many of the other more complicated attempts can look similar enough that their differences in forecast RMSE's are probably due more to randomness in the time series than to their different components and methods.
+
+
+
+
+
+
+
+
+
+
